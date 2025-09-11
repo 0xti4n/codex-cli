@@ -2,12 +2,12 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+use crate::openai_tools::AdditionalProperties;
 use crate::openai_tools::FreeformTool;
 use crate::openai_tools::FreeformToolFormat;
 use crate::openai_tools::JsonSchema;
 use crate::openai_tools::OpenAiTool;
 use crate::openai_tools::ResponsesApiTool;
-use crate::openai_tools::AdditionalProperties;
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("tool_apply_patch.lark");
 

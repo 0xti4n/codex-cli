@@ -85,11 +85,7 @@ async fn get_auth_status_no_auth() {
     .expect("getAuthStatus timeout")
     .expect("getAuthStatus response");
     let status: GetAuthStatusResponse = to_response(resp).expect("deserialize status");
-    assert_eq!(
-        status.auth_method,
-        Some(AuthMode::ApiKey),
-        "expected no auth method"
-    );
+    assert_eq!(status.auth_method, None, "expected no auth method");
     assert_eq!(status.auth_token, None, "expected no token");
 }
 

@@ -1208,7 +1208,12 @@ mod tests {
 
         assert_eq_tool_names(
             &tools,
-            &["shell", "web_search", "view_image", "rube/exec_multi"],
+            &[
+                "unified_exec",
+                "web_search",
+                "view_image",
+                "rube/exec_multi",
+            ],
         );
 
         // Validate nested additionalProperties object became a Schema(String)

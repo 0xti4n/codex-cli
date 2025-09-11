@@ -117,8 +117,6 @@ pub(crate) struct CodexMessageProcessor {
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
     // Queue of pending interrupt requests per conversation. We reply when TurnAborted arrives.
     pending_interrupts: Arc<Mutex<HashMap<ConversationId, Vec<RequestId>>>>,
-    // After logout, ignore environment-provided API key for auth status until process restart.
-    ignore_env_apikey_post_logout: bool,
 }
 
 impl CodexMessageProcessor {
@@ -138,7 +136,6 @@ impl CodexMessageProcessor {
             conversation_listeners: HashMap::new(),
             active_login: Arc::new(Mutex::new(None)),
             pending_interrupts: Arc::new(Mutex::new(HashMap::new())),
-            ignore_env_apikey_post_logout: false,
         }
     }
 

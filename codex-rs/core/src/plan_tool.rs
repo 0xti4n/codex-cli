@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use crate::codex::Session;
+use crate::openai_tools::AdditionalProperties;
 use crate::openai_tools::JsonSchema;
 use crate::openai_tools::OpenAiTool;
 use crate::openai_tools::ResponsesApiTool;
-use crate::openai_tools::AdditionalProperties;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use codex_protocol::models::FunctionCallOutputPayload;
