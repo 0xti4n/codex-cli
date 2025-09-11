@@ -12,6 +12,7 @@ use codex_core::RolloutRecorder;
 use codex_core::SessionMeta;
 use codex_core::auth::CLIENT_ID;
 use codex_core::auth::get_auth_file;
+use codex_core::auth::login_with_api_key;
 use codex_core::auth::try_read_auth_json;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
@@ -39,7 +40,6 @@ use codex_protocol::mcp_protocol::ApplyPatchApprovalParams;
 use codex_protocol::mcp_protocol::ApplyPatchApprovalResponse;
 use codex_protocol::mcp_protocol::ArchiveConversationParams;
 use codex_protocol::mcp_protocol::ArchiveConversationResponse;
-use codex_protocol::mcp_protocol::AuthMode;
 use codex_protocol::mcp_protocol::AuthStatusChangeNotification;
 use codex_protocol::mcp_protocol::ClientRequest;
 use codex_protocol::mcp_protocol::ConversationId;
@@ -57,6 +57,8 @@ use codex_protocol::mcp_protocol::InterruptConversationParams;
 use codex_protocol::mcp_protocol::InterruptConversationResponse;
 use codex_protocol::mcp_protocol::ListConversationsParams;
 use codex_protocol::mcp_protocol::ListConversationsResponse;
+use codex_protocol::mcp_protocol::LoginApiKeyParams;
+use codex_protocol::mcp_protocol::LoginApiKeyResponse;
 use codex_protocol::mcp_protocol::LoginChatGptCompleteNotification;
 use codex_protocol::mcp_protocol::LoginChatGptResponse;
 use codex_protocol::mcp_protocol::NewConversationParams;
@@ -175,6 +177,9 @@ impl CodexMessageProcessor {
             ClientRequest::GitDiffToRemote { request_id, params } => {
                 self.git_diff_to_origin(request_id, params.cwd).await;
             }
+            ClientRequest::LoginApiKey { request_id, params } => {
+                self.login_api_key(request_id, params).await;
+            }
             ClientRequest::LoginChatGpt { request_id } => {
                 self.login_chatgpt(request_id).await;
             }
@@ -198,6 +203,39 @@ impl CodexMessageProcessor {
             }
             ClientRequest::ExecOneOffCommand { request_id, params } => {
                 self.exec_one_off_command(request_id, params).await;
+            }
+        }
+    }
+
+    async fn login_api_key(&mut self, request_id: RequestId, params: LoginApiKeyParams) {
+        {
+            let mut guard = self.active_login.lock().await;
+            if let Some(active) = guard.take() {
+                active.drop();
+            }
+        }
+
+        match login_with_api_key(&self.config.codex_home, &params.api_key) {
+            Ok(()) => {
+                self.auth_manager.reload();
+                self.outgoing
+                    .send_response(request_id, LoginApiKeyResponse {})
+                    .await;
+
+                let payload = AuthStatusChangeNotification {
+                    auth_method: self.auth_manager.auth().map(|auth| auth.mode),
+                };
+                self.outgoing
+                    .send_server_notification(ServerNotification::AuthStatusChange(payload))
+                    .await;
+            }
+            Err(err) => {
+                let error = JSONRPCErrorError {
+                    code: INTERNAL_ERROR_CODE,
+                    message: format!("failed to save api key: {err}"),
+                    data: None,
+                };
+                self.outgoing.send_error(request_id, error).await;
             }
         }
     }
@@ -354,11 +392,12 @@ impl CodexMessageProcessor {
             )
             .await;
 
-        // After logout, suppress environment fallback so callers observe a fully signed-out state.
-        self.ignore_env_apikey_post_logout = true;
-
-        // Send auth status change notification reflecting a signed-out state.
-        let payload = AuthStatusChangeNotification { auth_method: None };
+        // Send auth status change notification reflecting the current auth mode
+        // after logout.
+        let current_auth_method = self.auth_manager.auth().map(|auth| auth.mode);
+        let payload = AuthStatusChangeNotification {
+            auth_method: current_auth_method,
+        };
         self.outgoing
             .send_server_notification(ServerNotification::AuthStatusChange(payload))
             .await;
@@ -369,7 +408,6 @@ impl CodexMessageProcessor {
         request_id: RequestId,
         params: codex_protocol::mcp_protocol::GetAuthStatusParams,
     ) {
-        let preferred_auth_method: AuthMode = self.auth_manager.preferred_auth_method();
         let include_token = params.include_token.unwrap_or(false);
         let do_refresh = params.refresh_token.unwrap_or(false);
 
@@ -377,52 +415,34 @@ impl CodexMessageProcessor {
             tracing::warn!("failed to refresh token while getting auth status: {err}");
         }
 
-        // Determine if an auth.json exists right now.
-        let auth_file_exists =
-            std::fs::metadata(codex_core::auth::get_auth_file(&self.config.codex_home)).is_ok();
+        // Determine whether auth is required based on the active model provider.
+        // If a custom provider is configured with `requires_openai_auth == false`,
+        // then no auth step is required; otherwise, default to requiring auth.
+        let requires_openai_auth = Some(self.config.model_provider.requires_openai_auth);
 
         let response = match self.auth_manager.auth() {
             Some(auth) => {
-                // If we've logged out and there's no auth.json, suppress environment fallback entirely.
-                if self.ignore_env_apikey_post_logout && !auth_file_exists {
-                    codex_protocol::mcp_protocol::GetAuthStatusResponse {
-                        auth_method: None,
-                        preferred_auth_method,
-                        auth_token: None,
+                let (reported_auth_method, token_opt) = match auth.get_token().await {
+                    Ok(token) if !token.is_empty() => {
+                        let tok = if include_token { Some(token) } else { None };
+                        (Some(auth.mode), tok)
                     }
-                } else {
-                    let (reported_auth_method, token_opt) = match auth.get_token().await {
-                        Ok(token) if !token.is_empty() => {
-                            // Do not surface environment-provided API keys even if include_token is true.
-                            let is_env_apikey =
-                                match std::env::var(codex_core::auth::OPENAI_API_KEY_ENV_VAR) {
-                                    Ok(val) => val == token,
-                                    Err(_) => false,
-                                };
-                            let tok = if include_token && !is_env_apikey {
-                                Some(token)
-                            } else {
-                                None
-                            };
-                            (Some(auth.mode), tok)
-                        }
-                        Ok(_) => (None, None),
-                        Err(err) => {
-                            tracing::warn!("failed to get token for auth status: {err}");
-                            (None, None)
-                        }
-                    };
-                    codex_protocol::mcp_protocol::GetAuthStatusResponse {
-                        auth_method: reported_auth_method,
-                        preferred_auth_method,
-                        auth_token: token_opt,
+                    Ok(_) => (None, None),
+                    Err(err) => {
+                        tracing::warn!("failed to get token for auth status: {err}");
+                        (None, None)
                     }
+                };
+                codex_protocol::mcp_protocol::GetAuthStatusResponse {
+                    auth_method: reported_auth_method,
+                    auth_token: token_opt,
+                    requires_openai_auth,
                 }
             }
             None => codex_protocol::mcp_protocol::GetAuthStatusResponse {
                 auth_method: None,
-                preferred_auth_method,
                 auth_token: None,
+                requires_openai_auth,
             },
         };
 
