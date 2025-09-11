@@ -7,6 +7,7 @@ use crate::openai_tools::FreeformToolFormat;
 use crate::openai_tools::JsonSchema;
 use crate::openai_tools::OpenAiTool;
 use crate::openai_tools::ResponsesApiTool;
+use crate::openai_tools::AdditionalProperties;
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("tool_apply_patch.lark");
 
@@ -121,7 +122,7 @@ It is important to remember:
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["input".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(AdditionalProperties::Bool(false)),
         },
     })
 }

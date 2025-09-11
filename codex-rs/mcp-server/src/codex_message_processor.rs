@@ -115,6 +115,8 @@ pub(crate) struct CodexMessageProcessor {
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
     // Queue of pending interrupt requests per conversation. We reply when TurnAborted arrives.
     pending_interrupts: Arc<Mutex<HashMap<ConversationId, Vec<RequestId>>>>,
+    // After logout, ignore environment-provided API key for auth status until process restart.
+    ignore_env_apikey_post_logout: bool,
 }
 
 impl CodexMessageProcessor {
@@ -134,6 +136,7 @@ impl CodexMessageProcessor {
             conversation_listeners: HashMap::new(),
             active_login: Arc::new(Mutex::new(None)),
             pending_interrupts: Arc::new(Mutex::new(HashMap::new())),
+            ignore_env_apikey_post_logout: false,
         }
     }
 
@@ -351,12 +354,11 @@ impl CodexMessageProcessor {
             )
             .await;
 
-        // Send auth status change notification reflecting the current auth mode
-        // after logout (which may fall back to API key via env var).
-        let current_auth_method = self.auth_manager.auth().map(|auth| auth.mode);
-        let payload = AuthStatusChangeNotification {
-            auth_method: current_auth_method,
-        };
+        // After logout, suppress environment fallback so callers observe a fully signed-out state.
+        self.ignore_env_apikey_post_logout = true;
+
+        // Send auth status change notification reflecting a signed-out state.
+        let payload = AuthStatusChangeNotification { auth_method: None };
         self.outgoing
             .send_server_notification(ServerNotification::AuthStatusChange(payload))
             .await;
@@ -375,23 +377,46 @@ impl CodexMessageProcessor {
             tracing::warn!("failed to refresh token while getting auth status: {err}");
         }
 
+        // Determine if an auth.json exists right now.
+        let auth_file_exists =
+            std::fs::metadata(codex_core::auth::get_auth_file(&self.config.codex_home)).is_ok();
+
         let response = match self.auth_manager.auth() {
             Some(auth) => {
-                let (reported_auth_method, token_opt) = match auth.get_token().await {
-                    Ok(token) if !token.is_empty() => {
-                        let tok = if include_token { Some(token) } else { None };
-                        (Some(auth.mode), tok)
+                // If we've logged out and there's no auth.json, suppress environment fallback entirely.
+                if self.ignore_env_apikey_post_logout && !auth_file_exists {
+                    codex_protocol::mcp_protocol::GetAuthStatusResponse {
+                        auth_method: None,
+                        preferred_auth_method,
+                        auth_token: None,
                     }
-                    Ok(_) => (None, None),
-                    Err(err) => {
-                        tracing::warn!("failed to get token for auth status: {err}");
-                        (None, None)
+                } else {
+                    let (reported_auth_method, token_opt) = match auth.get_token().await {
+                        Ok(token) if !token.is_empty() => {
+                            // Do not surface environment-provided API keys even if include_token is true.
+                            let is_env_apikey =
+                                match std::env::var(codex_core::auth::OPENAI_API_KEY_ENV_VAR) {
+                                    Ok(val) => val == token,
+                                    Err(_) => false,
+                                };
+                            let tok = if include_token && !is_env_apikey {
+                                Some(token)
+                            } else {
+                                None
+                            };
+                            (Some(auth.mode), tok)
+                        }
+                        Ok(_) => (None, None),
+                        Err(err) => {
+                            tracing::warn!("failed to get token for auth status: {err}");
+                            (None, None)
+                        }
+                    };
+                    codex_protocol::mcp_protocol::GetAuthStatusResponse {
+                        auth_method: reported_auth_method,
+                        preferred_auth_method,
+                        auth_token: token_opt,
                     }
-                };
-                codex_protocol::mcp_protocol::GetAuthStatusResponse {
-                    auth_method: reported_auth_method,
-                    preferred_auth_method,
-                    auth_token: token_opt,
                 }
             }
             None => codex_protocol::mcp_protocol::GetAuthStatusResponse {

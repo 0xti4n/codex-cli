@@ -38,6 +38,13 @@ pub struct FreeformToolFormat {
     pub(crate) definition: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum AdditionalProperties {
+    Bool(bool),
+    Schema(Box<JsonSchema>),
+}
+
 /// When serialized as JSON, this produces a valid "Tool" in the OpenAI
 /// Responses API.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -166,7 +173,7 @@ pub(crate) enum JsonSchema {
             rename = "additionalProperties",
             skip_serializing_if = "Option::is_none"
         )]
-        additional_properties: Option<bool>,
+        additional_properties: Option<AdditionalProperties>,
     },
 }
 
@@ -199,7 +206,7 @@ fn create_shell_tool() -> OpenAiTool {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["command".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(AdditionalProperties::Bool(false)),
         },
     })
 }
@@ -246,7 +253,7 @@ fn create_unified_exec_tool() -> OpenAiTool {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["input".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(AdditionalProperties::Bool(false)),
         },
     })
 }
@@ -344,7 +351,7 @@ The shell tool is used to execute shell commands.
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["command".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(AdditionalProperties::Bool(false)),
         },
     })
 }
@@ -368,7 +375,7 @@ fn create_view_image_tool() -> OpenAiTool {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["path".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(AdditionalProperties::Bool(false)),
         },
     })
 }
@@ -817,7 +824,7 @@ mod tests {
                                     "string_property".to_string(),
                                     "number_property".to_string(),
                                 ]),
-                                additional_properties: Some(false),
+                                additional_properties: Some(AdditionalProperties::Bool(false)),
                             },
                         ),
                     ]),
@@ -1146,6 +1153,95 @@ mod tests {
                 strict: false,
             })
         );
+    }
+
+    #[test]
+    fn test_mcp_tool_additional_properties_object_supported() {
+        let model_family = find_family_for_model("o3").expect("o3 should be a valid model family");
+        let config = ToolsConfig::new(&ToolsConfigParams {
+            model_family: &model_family,
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::ReadOnly,
+            include_plan_tool: false,
+            include_apply_patch_tool: false,
+            include_web_search_request: true,
+            use_streamable_shell_tool: false,
+            include_view_image_tool: true,
+            experimental_unified_exec_tool: true,
+        });
+
+        let tools = get_openai_tools(
+            &config,
+            Some(HashMap::from([(
+                "rube/exec_multi".to_string(),
+                mcp_types::Tool {
+                    name: "RUBE_MULTI_EXECUTE_TOOL".to_string(),
+                    input_schema: ToolInputSchema {
+                        properties: Some(serde_json::json!({
+                            "commands": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "tool_slug": {"type": "string"},
+                                        "arguments": {
+                                            "type": "object",
+                                            "additionalProperties": {"type": "string"}
+                                        }
+                                    },
+                                    "required": ["tool_slug"]
+                                }
+                            }
+                        })),
+                        required: None,
+                        r#type: "object".to_string(),
+                    },
+                    output_schema: None,
+                    title: None,
+                    annotations: None,
+                    description: Some(
+                        "Execute multiple tools with arbitrary arguments".to_string(),
+                    ),
+                },
+            )])),
+        );
+
+        assert_eq_tool_names(
+            &tools,
+            &["shell", "web_search", "view_image", "rube/exec_multi"],
+        );
+
+        // Validate nested additionalProperties object became a Schema(String)
+        let OpenAiTool::Function(ResponsesApiTool { parameters, .. }) = &tools[3] else {
+            panic!("expected function tool");
+        };
+        let JsonSchema::Object { properties, .. } = parameters else {
+            panic!("expected object schema");
+        };
+        let JsonSchema::Array { items, .. } =
+            properties.get("commands").expect("commands property")
+        else {
+            panic!("expected array schema for commands");
+        };
+        let JsonSchema::Object { properties, .. } = &**items else {
+            panic!("expected object schema in commands items");
+        };
+        let JsonSchema::Object {
+            additional_properties,
+            ..
+        } = properties.get("arguments").expect("arguments property")
+        else {
+            panic!("expected object schema for arguments");
+        };
+        match additional_properties {
+            Some(AdditionalProperties::Schema(inner)) => match &**inner {
+                JsonSchema::String { .. } => {}
+                other => {
+                    panic!("expected string schema inside additionalProperties, got {other:?}")
+                }
+            },
+            other => panic!("expected Schema variant for additionalProperties, got {other:?}"),
+        }
     }
 
     #[test]
