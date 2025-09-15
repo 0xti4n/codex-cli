@@ -3,7 +3,7 @@ use crate::frames::FRAME_TICK_DEFAULT;
 use crate::tui::FrameRequester;
 use crate::tui::Tui;
 use crate::tui::TuiEvent;
-use codex_core::config::SWIFTFOX_MODEL_DISPLAY_NAME;
+use codex_core::config::GPT_5_CODEX_DISPLAY_NAME;
 use color_eyre::eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -22,6 +22,8 @@ use std::time::Duration;
 use tokio_stream::StreamExt;
 
 const FRAME_TICK: Duration = FRAME_TICK_DEFAULT;
+const MIN_ANIMATION_HEIGHT: u16 = 24;
+const MIN_ANIMATION_WIDTH: u16 = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModelUpgradeDecision {
@@ -121,16 +123,20 @@ impl WidgetRef for &ModelUpgradePopup {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         Clear.render(area, buf);
 
-        let mut lines: Vec<Line> = self.frames()[self.frame_idx]
-            .lines()
-            .map(|l| l.to_string().into())
-            .collect();
+        // Skip the animation entirely when the viewport is too small so we don't clip frames.
+        let show_animation =
+            area.height >= MIN_ANIMATION_HEIGHT && area.width >= MIN_ANIMATION_WIDTH;
 
-        // Spacer between animation and text content.
-        lines.push("".into());
+        let mut lines: Vec<Line> = Vec::new();
+        if show_animation {
+            let frame = self.frames()[self.frame_idx];
+            lines.extend(frame.lines().map(|l| l.into()));
+            // Spacer between animation and text content.
+            lines.push("".into());
+        }
 
         lines.push(
-            format!("  Codex is now powered by {SWIFTFOX_MODEL_DISPLAY_NAME}, a new model that is")
+            format!("  Codex is now powered by {GPT_5_CODEX_DISPLAY_NAME}, a new model that is")
                 .into(),
         );
         lines.push(Line::from(vec![
@@ -156,7 +162,7 @@ impl WidgetRef for &ModelUpgradePopup {
         lines.push(create_option(
             0,
             ModelUpgradeOption::TryNewModel,
-            &format!("Yes, switch me to {SWIFTFOX_MODEL_DISPLAY_NAME}"),
+            &format!("Yes, switch me to {GPT_5_CODEX_DISPLAY_NAME}"),
         ));
         lines.push("".into());
         lines.push(create_option(
