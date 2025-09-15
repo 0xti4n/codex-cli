@@ -3,7 +3,6 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::chatwidget::ChatWidget;
 use crate::file_search::FileSearchManager;
-use crate::history_cell::HistoryCell;
 use crate::pager_overlay::Overlay;
 use crate::resume_picker::ResumeSelection;
 use crate::tui;
@@ -38,6 +37,7 @@ pub(crate) struct App {
     pub(crate) server: Arc<ConversationManager>,
     pub(crate) app_event_tx: AppEventSender,
     pub(crate) chat_widget: ChatWidget,
+    pub(crate) auth_manager: Arc<AuthManager>,
 
     /// Config is stored here so we can recreate ChatWidgets as needed.
     pub(crate) config: Config,
@@ -45,7 +45,7 @@ pub(crate) struct App {
 
     pub(crate) file_search: FileSearchManager,
 
-    pub(crate) transcript_cells: Vec<Arc<dyn HistoryCell>>,
+    pub(crate) transcript_lines: Vec<Line<'static>>,
 
     // Pager overlay state (Transcript or Static like Diff)
     pub(crate) overlay: Option<Overlay>,
@@ -88,6 +88,7 @@ impl App {
                     initial_prompt: initial_prompt.clone(),
                     initial_images: initial_images.clone(),
                     enhanced_keys_supported,
+                    auth_manager: auth_manager.clone(),
                 };
                 ChatWidget::new(init, conversation_manager.clone())
             }
@@ -109,6 +110,7 @@ impl App {
                     initial_prompt: initial_prompt.clone(),
                     initial_images: initial_images.clone(),
                     enhanced_keys_supported,
+                    auth_manager: auth_manager.clone(),
                 };
                 ChatWidget::new_from_existing(
                     init,
@@ -124,11 +126,12 @@ impl App {
             server: conversation_manager,
             app_event_tx,
             chat_widget,
+            auth_manager: auth_manager.clone(),
             config,
             active_profile,
             file_search,
             enhanced_keys_supported,
-            transcript_cells: Vec::new(),
+            transcript_lines: Vec::new(),
             overlay: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
@@ -205,17 +208,21 @@ impl App {
                     initial_prompt: None,
                     initial_images: Vec::new(),
                     enhanced_keys_supported: self.enhanced_keys_supported,
+                    auth_manager: self.auth_manager.clone(),
                 };
                 self.chat_widget = ChatWidget::new(init, self.server.clone());
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::InsertHistoryCell(cell) => {
-                let cell: Arc<dyn HistoryCell> = cell.into();
+                let mut cell_transcript = cell.transcript_lines();
+                if !cell.is_stream_continuation() && !self.transcript_lines.is_empty() {
+                    cell_transcript.insert(0, Line::from(""));
+                }
                 if let Some(Overlay::Transcript(t)) = &mut self.overlay {
-                    t.insert_cell(cell.clone());
+                    t.insert_lines(cell_transcript.clone());
                     tui.frame_requester().schedule_frame();
                 }
-                self.transcript_cells.push(cell.clone());
+                self.transcript_lines.extend(cell_transcript.clone());
                 let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
                 if !display.is_empty() {
                     // Only insert a separating blank line for new cells that are not
@@ -362,7 +369,7 @@ impl App {
             } => {
                 // Enter alternate screen and set viewport to full size.
                 let _ = tui.enter_alt_screen();
-                self.overlay = Some(Overlay::new_transcript(self.transcript_cells.clone()));
+                self.overlay = Some(Overlay::new_transcript(self.transcript_lines.clone()));
                 tui.frame_requester().schedule_frame();
             }
             // Esc primes/advances backtracking only in normal (not working) mode
@@ -387,7 +394,7 @@ impl App {
                 kind: KeyEventKind::Press,
                 ..
             } if self.backtrack.primed
-                && self.backtrack.nth_user_message != usize::MAX
+                && self.backtrack.count > 0
                 && self.chat_widget.composer_is_empty() =>
             {
                 // Delegate to helper for clarity; preserves behavior.
@@ -418,8 +425,10 @@ mod tests {
     use crate::app_backtrack::BacktrackState;
     use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
     use crate::file_search::FileSearchManager;
+    use codex_core::AuthManager;
     use codex_core::CodexAuth;
     use codex_core::ConversationManager;
+    use ratatui::text::Line;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
@@ -430,16 +439,19 @@ mod tests {
         let server = Arc::new(ConversationManager::with_auth(CodexAuth::from_api_key(
             "Test API Key",
         )));
+        let auth_manager =
+            AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
 
         App {
             server,
             app_event_tx,
             chat_widget,
+            auth_manager,
             config,
             active_profile: None,
             file_search,
-            transcript_cells: Vec::new(),
+            transcript_lines: Vec::<Line<'static>>::new(),
             overlay: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
