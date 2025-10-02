@@ -39,6 +39,7 @@ use codex_core::protocol::TokenUsageInfo;
 use codex_core::protocol::TurnAbortReason;
 use codex_core::protocol::TurnDiffEvent;
 use codex_core::protocol::UserMessageEvent;
+use codex_core::protocol::ViewImageToolCallEvent;
 use codex_core::protocol::WebSearchBeginEvent;
 use codex_core::protocol::WebSearchEndEvent;
 use codex_protocol::ConversationId;
@@ -68,7 +69,7 @@ use crate::bottom_pane::SelectionAction;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::custom_prompt_view::CustomPromptView;
-use crate::bottom_pane::popup_consts::STANDARD_POPUP_HINT_LINE;
+use crate::bottom_pane::popup_consts::standard_popup_hint_line;
 use crate::clipboard_paste::paste_image_to_temp_png;
 use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
@@ -536,6 +537,15 @@ impl ChatWidget {
             event.changes,
             &self.config.cwd,
         ));
+    }
+
+    fn on_view_image_tool_call(&mut self, event: ViewImageToolCallEvent) {
+        self.flush_answer_stream_with_separator();
+        self.add_to_history(history_cell::new_view_image_tool_call(
+            event.path,
+            &self.config.cwd,
+        ));
+        self.request_redraw();
     }
 
     fn on_patch_apply_end(&mut self, event: codex_core::protocol::PatchApplyEndEvent) {
@@ -1398,6 +1408,7 @@ impl ChatWidget {
             EventMsg::PatchApplyBegin(ev) => self.on_patch_apply_begin(ev),
             EventMsg::PatchApplyEnd(ev) => self.on_patch_apply_end(ev),
             EventMsg::ExecCommandEnd(ev) => self.on_exec_command_end(ev),
+            EventMsg::ViewImageToolCall(ev) => self.on_view_image_tool_call(ev),
             EventMsg::McpToolCallBegin(ev) => self.on_mcp_tool_call_begin(ev),
             EventMsg::McpToolCallEnd(ev) => self.on_mcp_tool_call_end(ev),
             EventMsg::WebSearchBegin(ev) => self.on_web_search_begin(ev),
@@ -1625,7 +1636,7 @@ impl ChatWidget {
             subtitle: Some(
                 "Switch between OpenAI models for this and future Codex CLI session".to_string(),
             ),
-            footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
             items,
             ..Default::default()
         });
@@ -1668,7 +1679,7 @@ impl ChatWidget {
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Select Approval Mode".to_string()),
-            footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
             items,
             ..Default::default()
         });
@@ -1843,7 +1854,7 @@ impl ChatWidget {
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Select a review preset".into()),
-            footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
             items,
             ..Default::default()
         });
@@ -1879,7 +1890,7 @@ impl ChatWidget {
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Select a base branch".to_string()),
-            footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
             items,
             is_searchable: true,
             search_placeholder: Some("Type to search branches".to_string()),
@@ -1920,7 +1931,7 @@ impl ChatWidget {
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Select a commit to review".to_string()),
-            footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
             items,
             is_searchable: true,
             search_placeholder: Some("Type to search commits".to_string()),
@@ -2145,7 +2156,7 @@ pub(crate) fn show_review_commit_picker_with_entries(
 
     chat.bottom_pane.show_selection_view(SelectionViewParams {
         title: Some("Select a commit to review".to_string()),
-        footer_hint: Some(STANDARD_POPUP_HINT_LINE.to_string()),
+        footer_hint: Some(standard_popup_hint_line()),
         items,
         is_searchable: true,
         search_placeholder: Some("Type to search commits".to_string()),
