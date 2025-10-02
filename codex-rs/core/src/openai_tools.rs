@@ -36,13 +36,6 @@ pub struct FreeformToolFormat {
     pub(crate) definition: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum AdditionalProperties {
-    Bool(bool),
-    Schema(Box<JsonSchema>),
-}
-
 /// When serialized as JSON, this produces a valid "Tool" in the OpenAI
 /// Responses API.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -133,13 +126,13 @@ impl ToolsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum AdditionalProperties {
-    Boolean(bool),
+    Bool(bool),
     Schema(Box<JsonSchema>),
 }
 
 impl From<bool> for AdditionalProperties {
     fn from(b: bool) -> Self {
-        Self::Boolean(b)
+        Self::Bool(b)
     }
 }
 
