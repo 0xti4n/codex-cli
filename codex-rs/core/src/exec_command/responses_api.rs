@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::openai_tools::AdditionalProperties;
+use crate::client_common::tools::ResponsesApiTool;
 use crate::openai_tools::JsonSchema;
-use crate::openai_tools::ResponsesApiTool;
 
 pub const EXEC_COMMAND_TOOL_NAME: &str = "exec_command";
 pub const WRITE_STDIN_TOOL_NAME: &str = "write_stdin";
@@ -50,7 +50,7 @@ pub fn create_exec_command_tool_for_responses_api() -> ResponsesApiTool {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["cmd".to_string()]),
-            additional_properties: Some(AdditionalProperties::Bool(false)),
+            additional_properties: Some(AdditionalProperties::Boolean(false)),
         },
     }
 }
@@ -93,7 +93,7 @@ Can write control characters (\u0003 for Ctrl-C), or an empty string to just pol
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["session_id".to_string(), "chars".to_string()]),
-            additional_properties: Some(AdditionalProperties::Bool(false)),
+            additional_properties: Some(AdditionalProperties::Boolean(false)),
         },
     }
 }
