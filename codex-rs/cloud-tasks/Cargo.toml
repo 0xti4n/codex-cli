@@ -32,7 +32,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio-stream = "0.1.17"
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-unicode-width = "0.1"
+unicode-width = "0.2"
 
 [dev-dependencies]
 async-trait = "0.1"
